@@ -107,7 +107,8 @@ function drawMap() {
   const sx = (cv.width - 2 * pad) / Math.max(1, bounds.x1 - bounds.x0);
   const sy = (cv.height - 2 * pad) / Math.max(1, bounds.y1 - bounds.y0);
   const k = Math.min(sx, sy);
-  const X = x => pad + (x - bounds.x0) * k, Y = y => cv.height - pad - (y - bounds.y0) * k;
+  const ox = (cv.width - (bounds.x1 - bounds.x0) * k) / 2, oy = (cv.height - (bounds.y1 - bounds.y0) * k) / 2;
+  const X = x => ox + (x - bounds.x0) * k, Y = y => cv.height - oy - (y - bounds.y0) * k;
   g.strokeStyle = "#2c313c"; g.lineWidth = 8 * (devicePixelRatio || 1); g.lineJoin = "round"; g.beginPath();
   track.forEach((p, i) => i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1]))); g.stroke();
   g.font = (11 * (devicePixelRatio || 1)) + "px system-ui";

@@ -96,6 +96,8 @@ async def race_loop():
         while i < len(events) and events[i]["t"] < START:      # catch up silently
             state.update(events[i])
             i += 1
+        state.race_t = START
+        publish(json.dumps(state.snapshot(drivers_info)))     # every browser starts fresh when the race (re)starts
         begin = time.monotonic()
         while i < len(events):
             race_t = START + (time.monotonic() - begin) * SPEED
