@@ -1,0 +1,149 @@
+"""PitWall server: replays a race and pushes the events to browsers over a WebSocket.
+
+Run:   uvicorn app.server:app --port 8000
+Env:   PITWALL_DATA   folder made by tools/fetch_openf1.py   (default data/2024_Monza)
+       PITWALL_SPEED  1 = real time                           (default 20)
+       PITWALL_START  start this many seconds into the race   (default 0)
+
+Endpoints:
+  WS   /ws           snapshot first, then batches of events ~20 times a second
+  GET  /api/status   clients connected, events sent, messages dropped
+"""
+import asyncio
+import json
+import os
+import time
+from contextlib import asynccontextmanager
+
+import pandas as pd
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+
+from app.replayer import all_events
+
+DATA_DIR = os.environ.get("PITWALL_DATA", "data/2024_Monza")
+SPEED = float(os.environ.get("PITWALL_SPEED", "20"))
+START = float(os.environ.get("PITWALL_START", "0"))
+TICK = 0.05            # seconds between batches
+QUEUE_SIZE = 100       # messages a slow client may fall behind before we start dropping
+
+
+def _num(v):
+    """'4.146' -> 4.146, but '+1 LAP' stays text."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return v
+
+
+class RaceState:
+    """Latest known facts, so a browser that joins late can be brought up to date."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.race_t = 0.0
+        self.cars, self.positions, self.gaps, self.laps = {}, {}, {}, []
+
+    def update(self, e):
+        kind = e["type"]
+        if kind == "car":
+            self.cars[e["driver"]] = e
+        elif kind == "position":
+            self.positions[e["driver"]] = e["position"]
+        elif kind == "gap":
+            self.gaps[e["driver"]] = {"gap_to_leader": e["gap_to_leader"], "interval": e["interval"]}
+        elif kind == "lap":
+            self.laps.append(e)
+
+    def snapshot(self, drivers):
+        return {"type": "snapshot", "race_t": round(self.race_t, 2), "drivers": drivers,
+                "cars": self.cars, "positions": self.positions, "gaps": self.gaps, "laps": self.laps}
+
+
+state = RaceState()
+clients = set()        # one queue per connected browser
+stats = {"events_sent": 0, "batches": 0, "dropped_messages": 0}
+drivers_info = {}
+
+
+def load_drivers():
+    df = pd.read_csv(os.path.join(DATA_DIR, "drivers.csv"))
+    return {r.name_acronym: {"name": r.full_name, "team": r.team_name, "colour": f"#{r.team_colour}"}
+            for r in df.itertuples()}
+
+
+def publish(message):
+    """Hand a message to every client's queue. A client that cannot keep up misses messages."""
+    for q in clients:
+        try:
+            q.put_nowait(message)
+        except asyncio.QueueFull:
+            stats["dropped_messages"] += 1
+
+
+async def race_loop():
+    events = await asyncio.to_thread(lambda: list(all_events(DATA_DIR)))
+    for e in events:
+        if e["type"] == "gap":
+            e["gap_to_leader"], e["interval"] = _num(e["gap_to_leader"]), _num(e["interval"])
+    print(f"Loaded {len(events)} events. Replaying at {SPEED}x from t={START}s")
+
+    while True:
+        state.reset()
+        i = 0
+        while i < len(events) and events[i]["t"] < START:      # catch up silently
+            state.update(events[i])
+            i += 1
+        begin = time.monotonic()
+        while i < len(events):
+            race_t = START + (time.monotonic() - begin) * SPEED
+            batch = []
+            while i < len(events) and events[i]["t"] <= race_t:
+                state.update(events[i])
+                batch.append(events[i])
+                i += 1
+            state.race_t = race_t
+            if batch:
+                publish(json.dumps({"type": "batch", "race_t": round(race_t, 2), "events": batch}))
+                stats["events_sent"] += len(batch)
+                stats["batches"] += 1
+            await asyncio.sleep(TICK)
+        print("Race finished. Restarting in 5 s.")
+        await asyncio.sleep(5)
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    drivers_info.update(load_drivers())
+    task = asyncio.create_task(race_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="PitWall", lifespan=lifespan)
+
+
+@app.websocket("/ws")
+async def ws_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    q = asyncio.Queue(maxsize=QUEUE_SIZE)
+    clients.add(q)
+    try:
+        await websocket.send_text(json.dumps(state.snapshot(drivers_info)))
+        while True:
+            await websocket.send_text(await q.get())
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        clients.discard(q)
+
+
+@app.get("/api/status")
+def status():
+    return {"clients": len(clients), "race_t": round(state.race_t, 1), "speed": SPEED, **stats}
+
+
+if os.path.isdir("app/static"):                      # the dashboard page (Phase 3)
+    app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
