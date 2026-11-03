@@ -93,11 +93,17 @@ function onSnapshot(m) {
   m.laps.forEach(noteLap);
   bounds = null; track.length = 0; trace = []; refDriver = null;
   for (const d in S.cars) growBounds(S.cars[d].x, S.cars[d].y);
-  if (!S.selected || !S.cars[S.selected]) S.selected = Object.keys(S.pos).sort((a, b) => S.pos[a] - S.pos[b])[0] || Object.keys(S.cars)[0] || null;
+  if (S.selected && !S.drivers[S.selected]) S.selected = null;   // keep the pick across restarts
 }
 function onBatch(m) {
   S.raceT = m.race_t; msgs++; evs += m.events.length;
   m.events.forEach(apply);
+}
+
+function ensureSelected() {
+  if (S.selected && S.cars[S.selected]) return;
+  S.selected = Object.keys(S.pos).sort((a, b) => S.pos[a] - S.pos[b])[0]
+            || Object.keys(S.cars)[0] || null;
 }
 
 function drawMap() {
@@ -162,7 +168,7 @@ $("board").addEventListener("click", ev => {
   S.selected = row.dataset.d; trace = []; renderBoard(); renderDetail();
 });
 function frame() { drawMap(); drawTrace(); requestAnimationFrame(frame); }
-setInterval(() => { renderBoard(); renderDetail(); renderHeader(); }, 250);
+setInterval(() => { ensureSelected(); renderBoard(); renderDetail(); renderHeader(); }, 250);
 setInterval(() => { $("rate").textContent = `${msgs} msg/s, ${evs} events/s`; msgs = evs = 0; }, 1000);
 addEventListener("resize", () => { fitCanvas(mapCv); fitCanvas(traceCv); });
 

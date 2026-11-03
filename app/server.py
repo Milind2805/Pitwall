@@ -1,14 +1,5 @@
-"""PitWall server: replays a race and pushes the events to browsers over a WebSocket.
+"""PitWall server: replays a race and pushes the events to browsers over a WebSocket."""
 
-Run:   uvicorn app.server:app --port 8000
-Env:   PITWALL_DATA   folder made by tools/fetch_openf1.py   (default data/2024_Monza)
-       PITWALL_SPEED  1 = real time                           (default 20)
-       PITWALL_START  start this many seconds into the race   (default 0)
-
-Endpoints:
-  WS   /ws           snapshot first, then batches of events ~20 times a second
-  GET  /api/status   clients connected, events sent, messages dropped
-"""
 import asyncio
 import json
 import os
@@ -75,13 +66,15 @@ def load_drivers():
 
 
 def publish(message):
-    """Hand a message to every client's queue. A client that cannot keep up misses messages."""
     for q in clients:
         try:
             q.put_nowait(message)
         except asyncio.QueueFull:
             stats["dropped_messages"] += 1
-
+            while not q.empty():                       # backlog is useless now
+                q.get_nowait()
+            q.put_nowait(json.dumps(state.snapshot(drivers_info)))   # resync
+            stats["resyncs"] = stats.get("resyncs", 0) + 1
 
 async def race_loop():
     events = await asyncio.to_thread(lambda: list(all_events(DATA_DIR)))

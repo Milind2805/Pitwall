@@ -20,7 +20,7 @@ async def one_client(url, seconds):
         while time.monotonic() - t0 < seconds:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
             msgs += 1
-            events += len(msg["events"])
+            events += len(msg.get("events", []))
             last_t = msg["race_t"]
     return snap, msgs, events, time.monotonic() - t0, last_t
 
@@ -42,4 +42,4 @@ async def main():
           f"{avg(2)/secs:.0f} events/s per client, last race_t={results[0][4]}")
 
 
-asyncio.run(main())
+asyncio.run(main())                                       
