@@ -11,6 +11,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from app.replayer import all_events
+from app.predictor import win_probs
 
 DATA_DIR = os.environ.get("PITWALL_DATA", "data/2024_Monza")
 SPEED = float(os.environ.get("PITWALL_SPEED", "20"))
@@ -34,8 +35,10 @@ class RaceState:
         self.reset()
 
     def reset(self):
-        self.race_t = 0.0
-        self.cars, self.positions, self.gaps, self.laps = {}, {}, {}, []
+            self.race_t = 0.0
+            self.lap = 0
+            self.prediction = None
+            self.cars, self.positions, self.gaps, self.laps = {}, {}, {}, []
 
     def update(self, e):
         kind = e["type"]
@@ -47,10 +50,14 @@ class RaceState:
             self.gaps[e["driver"]] = {"gap_to_leader": e["gap_to_leader"], "interval": e["interval"]}
         elif kind == "lap":
             self.laps.append(e)
+            self.lap = max(self.lap, e.get("lap_number") or 0)
+        elif kind == "prediction":
+            self.prediction = e
 
     def snapshot(self, drivers):
         return {"type": "snapshot", "race_t": round(self.race_t, 2), "drivers": drivers,
-                "cars": self.cars, "positions": self.positions, "gaps": self.gaps, "laps": self.laps}
+                "cars": self.cars, "positions": self.positions, "gaps": self.gaps,
+                "laps": self.laps, "prediction": self.prediction}
 
 
 state = RaceState()
@@ -81,7 +88,8 @@ async def race_loop():
     for e in events:
         if e["type"] == "gap":
             e["gap_to_leader"], e["interval"] = _num(e["gap_to_leader"]), _num(e["interval"])
-    print(f"Loaded {len(events)} events. Replaying at {SPEED}x from t={START}s")
+    total_laps = max((e["lap_number"] for e in events if e["type"] == "lap"), default=0)   # NEW
+    print(f"Loaded {len(events)} events ({total_laps} laps). Replaying at {SPEED}x from t={START}s")
 
     while True:
         state.reset()
@@ -99,6 +107,11 @@ async def race_loop():
                 state.update(events[i])
                 batch.append(events[i])
                 i += 1
+            if any(e["type"] == "lap" for e in batch):                                    
+                pred = {"type": "prediction", "t": round(race_t, 2), "lap": state.lap,   
+                        "probs": win_probs(state.positions, state.gaps, state.lap, total_laps)}  
+                state.update(pred)                                                        
+                batch.append(pred)                                                        
             state.race_t = race_t
             if batch:
                 publish(json.dumps({"type": "batch", "race_t": round(race_t, 2), "events": batch}))

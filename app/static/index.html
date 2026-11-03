@@ -20,6 +20,9 @@
   .stats { display:flex; gap:26px; flex-wrap:wrap; margin:6px 0 10px; }
   .stat .v { font-size:24px; font-weight:600; font-variant-numeric:tabular-nums; } .stat .l { color:var(--dim); font-size:12px; }
   #trace { width:100%; height:170px; display:block; }
+  .prow { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .prow .n { width:44px; } .prow .p { width:56px; text-align:right; color:var(--dim); font-variant-numeric:tabular-nums; }
+  .prow .b { height:12px; border-radius:3px; }
   .legend { color:var(--dim); font-size:12px; margin-top:4px; }
   @media (max-width:800px) { main { grid-template-columns:1fr; } }
 </style></head><body>
@@ -31,6 +34,10 @@
   <section class="panel"><canvas id="map"></canvas></section>
   <section class="panel">
     <table id="board"><thead><tr><th>P</th><th>Driver</th><th>Gap</th><th>Interval</th><th>Last lap</th><th>Tyre</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section class="panel wide">
+    <div style="font-weight:600">Win probability <span id="predlap" style="color:var(--dim);font-weight:400"></span></div>
+    <div id="pred"></div>
   </section>
   <section class="panel wide">
     <div id="who" style="font-weight:600">Click a driver</div>
@@ -46,7 +53,7 @@
   </section>
 </main>
 <script>
-const S = { drivers:{}, cars:{}, pos:{}, gaps:{}, lastLap:{}, tyre:{}, lap:0, raceT:0, selected:null };
+const S = { drivers:{}, cars:{}, pos:{}, gaps:{}, lastLap:{}, tyre:{}, lap:0, raceT:0, selected:null ,pred:null};
 const track = [];                       // x,y points of one car, draws the circuit outline
 let refDriver = null, trace = [], bounds = null, msgs = 0, evs = 0;
 
@@ -85,6 +92,7 @@ function apply(e) {
     if (e.driver === S.selected) pushTrace(e);
   } else if (e.type === "position") S.pos[e.driver] = e.position;
   else if (e.type === "gap") S.gaps[e.driver] = { g: e.gap_to_leader, i: e.interval };
+  else if (e.type === "prediction") S.pred = e;
   else if (e.type === "lap") noteLap(e);
 }
 function onSnapshot(m) {
@@ -94,6 +102,7 @@ function onSnapshot(m) {
   bounds = null; track.length = 0; trace = []; refDriver = null;
   for (const d in S.cars) growBounds(S.cars[d].x, S.cars[d].y);
   if (S.selected && !S.drivers[S.selected]) S.selected = null;   // keep the pick across restarts
+  S.pred = m.prediction;
 }
 function onBatch(m) {
   S.raceT = m.race_t; msgs++; evs += m.events.length;
@@ -162,13 +171,21 @@ function renderHeader() {
   $("clock").textContent = `Race clock ${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   $("lapno").textContent = S.lap ? `Lap ${S.lap}` : "";
 }
+function renderPred() {
+    const p = S.pred;
+    if (!p) { $("pred").innerHTML = '<span class="legend">waiting for the first lap...</span>'; $("predlap").textContent = ""; return; }
+    $("predlap").textContent = `after lap ${p.lap}`;
+    $("pred").innerHTML = Object.entries(p.probs).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([d, v]) =>
+      `<div class="prow"><span class="n">${d}</span><div style="flex:1"><div class="b" style="width:${(v * 100).toFixed(1)}%;background:${colour(d)}"></div></div>` +
+      `<span class="p">${(v * 100).toFixed(1)}%</span></div>`).join("");
+  }
 
 $("board").addEventListener("click", ev => {
   const row = ev.target.closest("tr.row"); if (!row) return;
   S.selected = row.dataset.d; trace = []; renderBoard(); renderDetail();
 });
 function frame() { drawMap(); drawTrace(); requestAnimationFrame(frame); }
-setInterval(() => { ensureSelected(); renderBoard(); renderDetail(); renderHeader(); }, 250);
+setInterval(() => { ensureSelected(); renderBoard(); renderDetail(); renderHeader(); renderPred(); }, 250);
 setInterval(() => { $("rate").textContent = `${msgs} msg/s, ${evs} events/s`; msgs = evs = 0; }, 1000);
 addEventListener("resize", () => { fitCanvas(mapCv); fitCanvas(traceCv); });
 
