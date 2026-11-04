@@ -22,7 +22,8 @@ def _gap(pos, raw):
 def build_rows(positions, gaps, last_lap, durs, lap, total_laps):
     """positions {drv: pos}, gaps {drv: {gap_to_leader, interval}}, last_lap {drv: lap event},
     durs {drv: last 3 lap durations}. Returns (drivers, rows) or None if the model should not run."""
-    drivers = [d for d in positions if d in last_lap and durs.get(d)]
+    drivers = [d for d in positions
+    if d in last_lap and durs.get(d) and (last_lap[d].get("lap_number") or 0) >= lap - 2]
     if len(drivers) < 10 or lap >= total_laps:
         return None
     pace = {d: statistics.median(durs[d]) for d in drivers}

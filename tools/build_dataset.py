@@ -34,6 +34,8 @@ def build_race(d):
         if L >= total_laps or len(g) < 10:
             continue
         T = g["t_end"].median()                                   # one snapshot time for the whole field
+        g = laps[laps["t_end"] <= T].sort_values("lap_number").groupby("driver").tail(1)   # NEW: each driver's latest lap finished by T
+        g = g[g["lap_number"] >= L - 2]                           # NEW: drop cars that stopped long ago                                # one snapshot time for the whole field
         p = pos[pos["t"] <= T].groupby("driver")["position"].last()
         gp = gaps[gaps["t"] <= T].groupby("driver")[["gap_to_leader", "interval"]].last()
         df = g.set_index("driver").join(p, how="inner").join(gp, how="left")

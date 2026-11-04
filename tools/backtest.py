@@ -63,3 +63,9 @@ for lap in (20, 33, 45):
     g = ds[(ds["race"] == "2024_Monza") & (ds["lap"] == lap)].set_index("driver")
     if len(g):
         print(f"\nMonza 2024, after lap {lap}:  P(LEC wins)  heuristic {g.loc['LEC','p_heur']:.1%}   model {g.loc['LEC','p_model']:.1%}")
+
+bins = [0, .02, .05, .1, .2, .4, .6, .8, .9, 1.0]
+ds["bin"] = pd.cut(ds["p_model"], bins, include_lowest=True)
+cal = ds.groupby("bin", observed=False).agg(predicted=("p_model", "mean"), actual=("win", "mean"), rows=("win", "size"))
+print("\nCalibration of the model, out of fold (predicted vs how often it really won):")
+print(cal.round(3).to_string())
