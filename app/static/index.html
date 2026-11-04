@@ -173,7 +173,7 @@ function renderHeader() {
 }
 function renderPred() {
     const p = S.pred;
-    if (!p) { $("pred").innerHTML = '<span class="legend">waiting for the first lap...</span>'; $("predlap").textContent = ""; return; }
+    if (!p) { $("pred").innerHTML = '<span class="legend">waiting for the first lap...</span>';   $("predlap").textContent = `after lap ${p.lap} (${p.source})`; return; }
     $("predlap").textContent = `after lap ${p.lap}`;
     $("pred").innerHTML = Object.entries(p.probs).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([d, v]) =>
       `<div class="prow"><span class="n">${d}</span><div style="flex:1"><div class="b" style="width:${(v * 100).toFixed(1)}%;background:${colour(d)}"></div></div>` +
