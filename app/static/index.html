@@ -36,10 +36,6 @@
     <table id="board"><thead><tr><th>P</th><th>Driver</th><th>Gap</th><th>Interval</th><th>Last lap</th><th>Tyre</th></tr></thead><tbody></tbody></table>
   </section>
   <section class="panel wide">
-    <div style="font-weight:600">Win probability <span id="predlap" style="color:var(--dim);font-weight:400"></span></div>
-    <div id="pred"></div>
-  </section>
-  <section class="panel wide">
     <div id="who" style="font-weight:600">Click a driver</div>
     <div class="stats">
       <div class="stat"><div class="v" id="v-speed">-</div><div class="l">km/h</div></div>
@@ -50,6 +46,10 @@
     </div>
     <canvas id="trace"></canvas>
     <div class="legend">Last 60 race seconds: speed (white), throttle (green), braking (red bands)</div>
+  </section>
+  <section class="panel wide">
+    <div style="font-weight:600">Win probability <span id="predlap" style="color:var(--dim);font-weight:400"></span></div>
+    <div id="pred"></div>
   </section>
 </main>
 <script>

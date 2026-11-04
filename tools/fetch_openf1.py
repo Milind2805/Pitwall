@@ -131,6 +131,12 @@ def timed(rows, acronyms, t0, cols):
     df["driver"] = df["driver_number"].map(acronyms)
     return df[["t", "driver"] + cols].sort_values("t")
 
+def fetch_positions(sk, acronyms, start, end):
+    """Position changes during the race, plus each driver's starting-grid row (stamped before session start)."""
+    rows = fetch_windowed("position", q(session_key=sk), start, end)
+    rows += get_json("position", f"session_key={sk}&date<{fmt(start)}")
+    return timed(rows, acronyms, start, ["position"])
+
 
 def main():
     year = int(sys.argv[1]) if len(sys.argv) > 1 else 2024
@@ -160,7 +166,7 @@ def main():
         pit.to_csv(os.path.join(out_dir, "pit.csv"), index=False)
 
     print("Positions and gaps ...")
-    pos = timed(fetch_windowed("position", q(session_key=sk), start, end), acronyms, start, ["position"])
+    pos = fetch_positions(sk, acronyms, start, end)
     pos.to_csv(os.path.join(out_dir, "positions.csv"), index=False)
     gaps = timed(fetch_windowed("intervals", q(session_key=sk), start, end), acronyms, start,
                  ["gap_to_leader", "interval"])
