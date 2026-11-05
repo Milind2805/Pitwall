@@ -12,6 +12,7 @@
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; min-width:0; }
   .wide { grid-column:1 / -1; }
   #map { width:100%; height:430px; display:block; }
+  tr.out { opacity:.45; } tr.out td:nth-child(3) { color:var(--bad); font-weight:600; }
   table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
   th { text-align:left; color:var(--dim); font-weight:500; padding:4px 6px; font-size:12px; }
   td { padding:3px 6px; border-top:1px solid var(--line); white-space:nowrap; }
@@ -53,7 +54,7 @@
   </section>
 </main>
 <script>
-const S = { drivers:{}, cars:{}, pos:{}, gaps:{}, lastLap:{}, tyre:{}, lap:0, raceT:0, selected:null ,pred:null};
+const S = { drivers:{}, cars:{}, pos:{}, gaps:{}, lastLap:{}, tyre:{}, lap:0, raceT:0, lapNo:{}, selected:null ,pred:null};
 const track = [];                       // x,y points of one car, draws the circuit outline
 let refDriver = null, trace = [], bounds = null, msgs = 0, evs = 0;
 
@@ -78,8 +79,10 @@ function colour(d) { return (S.drivers[d] && S.drivers[d].colour) || "#888"; }
 function noteLap(e) {
   S.lastLap[e.driver] = e.lap_duration;
   S.tyre[e.driver] = { c: e.compound, age: e.tyre_age };
+  S.lapNo[e.driver] = Math.max(S.lapNo[e.driver] ?? 0, e.lap_number || 0);
   S.lap = Math.max(S.lap, e.lap_number || 0);
 }
+
 function pushTrace(e) {
   trace.push({ t: S.raceT, v: e.speed, th: e.throttle, br: e.brake });
   while (trace.length && trace[0].t < S.raceT - 70) trace.shift();
@@ -96,7 +99,7 @@ function apply(e) {
   else if (e.type === "lap") noteLap(e);
 }
 function onSnapshot(m) {
-  Object.assign(S, { drivers:m.drivers, cars:m.cars, pos:m.positions, raceT:m.race_t, lastLap:{}, tyre:{}, lap:0 });
+  Object.assign(S, { drivers:m.drivers, cars:m.cars, pos:m.positions, raceT:m.race_t, lastLap:{}, tyre:{}, lap:0, lapNo:{}, selected:S.selected, pred:m.prediction });
   S.gaps = {}; for (const d in m.gaps) S.gaps[d] = { g: m.gaps[d].gap_to_leader, i: m.gaps[d].interval };
   m.laps.forEach(noteLap);
   bounds = null; track.length = 0; trace = []; refDriver = null;
@@ -148,17 +151,20 @@ function drawTrace() {
   };
   line("th", 100, "#51cf66", 1); line("v", 360, "#e6e6e6", 1.6);
 }
+function isOut(d) { return S.lap - (S.lapNo[d] ?? 0) > 2; }
 function renderBoard() {
-  const order = Object.keys(S.cars).sort((a, b) => (S.pos[a] ?? 99) - (S.pos[b] ?? 99));
+  const order = Object.keys(S.cars).sort((a, b) =>
+    isOut(a) - isOut(b) || (S.pos[a] ?? 99) - (S.pos[b] ?? 99));
   $("board").tBodies[0].innerHTML = order.map(d => {
-    const g = S.gaps[d] || {}, t = S.tyre[d], p = S.pos[d];
+    const g = S.gaps[d] || {}, t = S.tyre[d], p = S.pos[d], out = isOut(d);
     const tyre = t && t.c ? `<span style="color:${TYRE[t.c] || "#aaa"}">${t.c[0]}</span> ${t.age ?? ""}` : "-";
-    return `<tr class="row ${d === S.selected ? "sel" : ""}" data-d="${d}"><td>${p ?? "-"}</td>` +
+    return `<tr class="row ${d === S.selected ? "sel" : ""} ${out ? "out" : ""}" data-d="${d}"><td>${out ? "-" : (p ?? "-")}</td>` +
       `<td><span class="bar" style="background:${colour(d)}"></span>${d}</td>` +
-      `<td>${p === 1 ? "Leader" : fmtGap(g.g)}</td><td>${p === 1 ? "-" : fmtGap(g.i)}</td>` +
-      `<td>${fmtLap(S.lastLap[d])}</td><td>${tyre}</td></tr>`;
+      `<td>${out ? "OUT" : p === 1 ? "Leader" : fmtGap(g.g)}</td><td>${out || p === 1 ? "-" : fmtGap(g.i)}</td>` +
+      `<td>${out ? "-" : fmtLap(S.lastLap[d])}</td><td>${out ? "-" : tyre}</td></tr>`;
   }).join("");
 }
+
 function renderDetail() {
   const c = S.cars[S.selected];
   $("who").textContent = c ? `${S.selected}  ${S.drivers[S.selected]?.name ?? ""}  ${S.drivers[S.selected]?.team ?? ""}` : "Click a driver";
