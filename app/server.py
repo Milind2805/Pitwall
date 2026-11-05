@@ -12,12 +12,19 @@ from fastapi.staticfiles import StaticFiles
 
 from app.replayer import all_events
 from app.predictor import live_probs
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from app.features import build_rows
+from app.predictor import live_probs
+from app.qf_client import QueueForge
 
 DATA_DIR = os.environ.get("PITWALL_DATA", "data/2024_Monza")
 SPEED = float(os.environ.get("PITWALL_SPEED", "20"))
 START = float(os.environ.get("PITWALL_START", "0"))
 TICK = 0.05            # seconds between batches
 QUEUE_SIZE = 100       # messages a slow client may fall behind before we start dropping
+USE_QF = os.environ.get("PITWALL_QF") == "1"      # off by default: the old in-process path still works
+qf = QueueForge()
+_tasks = set()
 
 
 def _num(v):
@@ -35,6 +42,7 @@ class RaceState:
         self.reset()
 
     def reset(self):
+            self.run_id = time.time_ns()
             self.race_t = 0.0
             self.lap = 0
             self.pred_lap = 0
@@ -76,7 +84,8 @@ class RaceState:
 
 state = RaceState()
 clients = set()        # one queue per connected browser
-stats = {"events_sent": 0, "batches": 0, "dropped_messages": 0}
+stats = {"events_sent": 0, "batches": 0, "dropped_messages": 0, "resyncs": 0,
+         "jobs_submitted": 0, "submit_failures": 0, "predictions_via_queue": 0, "stale_predictions": 0}
 drivers_info = {}
 
 
@@ -96,6 +105,14 @@ def publish(message):
                 q.get_nowait()
             q.put_nowait(json.dumps(state.snapshot(drivers_info)))   # resync
             stats["resyncs"] = stats.get("resyncs", 0) + 1
+
+async def submit_job(payload):
+    try:
+        await qf.submit("predict", payload)
+        stats["jobs_submitted"] += 1
+    except Exception as ex:
+        stats["submit_failures"] += 1
+        print(f"could not submit prediction job: {ex}")
 
 async def race_loop():
     events = await asyncio.to_thread(lambda: list(all_events(DATA_DIR)))
@@ -121,14 +138,24 @@ async def race_loop():
                 state.update(events[i])
                 batch.append(events[i])
                 i += 1
-            if state.lap < total_laps and state.ready_for_prediction():          # NEW (replaces the old if-any-lap block)
-                state.pred_lap = state.lap                                       # NEW
-                probs, source = live_probs(state.positions, state.gaps, state.last_lap,   # NEW
-                                           state.durs, state.lap, total_laps)    # NEW
-                pred = {"type": "prediction", "t": round(race_t, 2), "lap": state.lap,    # NEW
-                        "source": source, "probs": probs}                        # NEW
-                state.update(pred)                                               # NEW
-                batch.append(pred)                                               # NEW
+                if state.lap < total_laps and state.ready_for_prediction():
+                    state.pred_lap = state.lap
+                    built = build_rows(state.positions, state.gaps, state.last_lap,
+                                   state.durs, state.lap, total_laps) if USE_QF else None
+                if built:
+                    drivers, rows = built
+                    payload = json.dumps({"run": state.run_id, "lap": state.lap, "drivers": drivers, "rows": rows},
+                                         separators=(",", ":"))          # no spaces: one safe token for the text protocol
+                    t = asyncio.create_task(submit_job(payload))        # never makes the stream wait for the broker
+                    _tasks.add(t)
+                    t.add_done_callback(_tasks.discard)
+                else:                                                   # queue off, or too few cars: compute in-process
+                    probs, source = live_probs(state.positions, state.gaps, state.last_lap,
+                                               state.durs, state.lap, total_laps)
+                    pred = {"type": "prediction", "t": round(race_t, 2), "lap": state.lap,
+                            "source": source, "probs": probs}
+                    state.update(pred)
+                    batch.append(pred)                                   # NEW
             state.race_t = race_t
             if batch:
                 publish(json.dumps({"type": "batch", "race_t": round(race_t, 2), "events": batch}))
@@ -168,6 +195,20 @@ async def ws_endpoint(websocket: WebSocket):
 @app.get("/api/status")
 def status():
     return {"clients": len(clients), "race_t": round(state.race_t, 1), "speed": SPEED, **stats}
+@app.post("/internal/prediction")
+
+async def post_prediction(request: Request):
+    r = await request.json()
+    last = state.prediction["lap"] if state.prediction else 0
+    if r["run"] != state.run_id or r["lap"] <= last:     # previous race run, duplicate or out of order
+        stats["stale_predictions"] += 1
+        return {"ok": False, "reason": "stale"}
+    pred = {"type": "prediction", "t": round(state.race_t, 2), "lap": r["lap"],
+            "source": r["source"], "probs": r["probs"]}
+    state.update(pred)
+    publish(json.dumps({"type": "batch", "race_t": round(state.race_t, 2), "events": [pred]}))
+    stats["predictions_via_queue"] += 1
+    return {"ok": True}
 
 
 if os.path.isdir("app/static"):                      # the dashboard page (Phase 3)
