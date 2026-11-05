@@ -85,7 +85,7 @@ class RaceState:
 state = RaceState()
 clients = set()        # one queue per connected browser
 stats = {"events_sent": 0, "batches": 0, "dropped_messages": 0, "resyncs": 0,
-         "jobs_submitted": 0, "submit_failures": 0, "predictions_via_queue": 0, "stale_predictions": 0}
+         "jobs_submitted": 0, "submit_failures": 0, "predictions_via_queue": 0, "stale_predictions": 0, "duplicate_submits": 0}
 drivers_info = {}
 
 
@@ -106,11 +106,19 @@ def publish(message):
             q.put_nowait(json.dumps(state.snapshot(drivers_info)))   # resync
             stats["resyncs"] = stats.get("resyncs", 0) + 1
 
-async def submit_job(payload):
+_submitted = set()
+
+
+async def submit_job(run, lap, payload):
+    if (run, lap) in _submitted:                      # one job per (run, lap), whatever the caller does
+        stats["duplicate_submits"] += 1
+        return
+    _submitted.add((run, lap))
     try:
-        await qf.submit("predict", payload)
+        await qf.submit("predict", payload, priority=lap)     # newest lap first; FIFO within a lap
         stats["jobs_submitted"] += 1
     except Exception as ex:
+        _submitted.discard((run, lap))
         stats["submit_failures"] += 1
         print(f"could not submit prediction job: {ex}")
 
@@ -146,7 +154,7 @@ async def race_loop():
                     drivers, rows = built
                     payload = json.dumps({"run": state.run_id, "lap": state.lap, "drivers": drivers, "rows": rows},
                                          separators=(",", ":"))          # no spaces: one safe token for the text protocol
-                    t = asyncio.create_task(submit_job(payload))        # never makes the stream wait for the broker
+                    t = asyncio.create_task(submit_job(state.run_id, state.lap, payload))      # never makes the stream wait for the broker
                     _tasks.add(t)
                     t.add_done_callback(_tasks.discard)
                 else:                                                   # queue off, or too few cars: compute in-process

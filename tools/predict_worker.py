@@ -22,6 +22,7 @@ MODEL_PATH = os.environ.get("PITWALL_MODEL", "models/win_model.joblib")
 
 def run_job(model, payload):
     job = json.loads(payload)
+    print(f"predict lap {job['lap']}")
     p = model.predict_proba(pd.DataFrame(job["rows"], columns=FEATURES))[:, 1]
     p = p / max(p.sum(), 1e-12)
     result = {"run": job["run"], "lap": job["lap"], "source": "model",
