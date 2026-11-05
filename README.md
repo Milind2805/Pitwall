@@ -2,7 +2,7 @@
 
 A live F1 race dashboard with real-time win probabilities. It replays a recorded race (the 2024 Italian GP, from the free [OpenF1](https://openf1.org) API) over a WebSocket, so the browser sees cars, gaps, tyres and telemetry arrive as if the race were live, and a trained model estimates each driver's chance of winning after every lap.
 
-![Dashboard](docs/pitwall_dashboard.png)
+![Dashboard](docs/Pitwall_Dashboard.png)
 
 > It replays a recorded race. Nothing in the streaming or prediction path depends on the data being recorded, but no live feed is wired up in this repo.
 
