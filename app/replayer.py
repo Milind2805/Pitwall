@@ -15,8 +15,10 @@ def _rows(df):
 
 
 def car_events(data_dir):
-    df = pd.read_csv(os.path.join(data_dir, "telemetry.csv.gz"))
-    for r in _rows(df):
+    path = os.path.join(data_dir, "telemetry.csv.gz")
+    if not os.path.exists(path):          # races fetched with fetch_summary.py have no car telemetry
+        return
+    for r in _rows(pd.read_csv(path)):
         r["type"] = "car"
         yield r
 

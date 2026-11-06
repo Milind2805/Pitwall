@@ -25,10 +25,11 @@
   .prow .n { width:44px; } .prow .p { width:56px; text-align:right; color:var(--dim); font-variant-numeric:tabular-nums; }
   .prow .b { height:12px; border-radius:3px; }
   .legend { color:var(--dim); font-size:12px; margin-top:4px; }
+    select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; }
   @media (max-width:800px) { main { grid-template-columns:1fr; } }
 </style></head><body>
 <header>
-  <h1>PitWall</h1><span id="clock">Race clock 00:00</span><span id="lapno"></span>
+  <h1>PitWall</h1><select id="race"></select><span id="clock">Race clock 00:00</span><span id="lapno"></span>
   <span id="rate"></span><span id="conn" class="bad">connecting...</span>
 </header>
 <main>
@@ -100,6 +101,8 @@ function apply(e) {
 }
 function onSnapshot(m) {
   Object.assign(S, { drivers:m.drivers, cars:m.cars, pos:m.positions, raceT:m.race_t, lastLap:{}, tyre:{}, lap:0, lapNo:{}, selected:S.selected, pred:m.prediction });
+  if (m.race) $("race").value = m.race;
+  $("conn").textContent = "live"; $("conn").className = "ok";
   S.gaps = {}; for (const d in m.gaps) S.gaps[d] = { g: m.gaps[d].gap_to_leader, i: m.gaps[d].interval };
   m.laps.forEach(noteLap);
   bounds = null; track.length = 0; trace = []; refDriver = null;
@@ -113,14 +116,13 @@ function onBatch(m) {
 }
 
 function ensureSelected() {
-  if (S.selected && S.cars[S.selected]) return;
-  S.selected = Object.keys(S.pos).sort((a, b) => S.pos[a] - S.pos[b])[0]
-            || Object.keys(S.cars)[0] || null;
+  if (S.selected && S.drivers[S.selected]) return;
+  S.selected = Object.keys(S.pos).sort((a, b) => S.pos[a] - S.pos[b])[0] || Object.keys(S.drivers)[0] || null;
 }
 
 function drawMap() {
   const cv = mapCv, g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height);
-  if (!bounds) return;
+  if (!bounds) { g.fillStyle = "#8a8f98"; g.font = "14px system-ui"; g.fillText("The track map appears when car telemetry is available", 20, 30); return; }
   const pad = 30 * (devicePixelRatio || 1);
   const sx = (cv.width - 2 * pad) / Math.max(1, bounds.x1 - bounds.x0);
   const sy = (cv.height - 2 * pad) / Math.max(1, bounds.y1 - bounds.y0);
@@ -151,9 +153,21 @@ function drawTrace() {
   };
   line("th", 100, "#51cf66", 1); line("v", 360, "#e6e6e6", 1.6);
 }
+
+async function loadRaces() {
+  const r = await (await fetch("/api/races")).json();
+  $("race").innerHTML = r.races.map(x => `<option value="${x.name}">${x.label}${x.telemetry ? "" : " (no telemetry)"}</option>`).join("");
+  $("race").value = r.current;
+}
+$("race").addEventListener("change", async ev => {
+  $("conn").textContent = "loading race..."; $("conn").className = "bad";
+  await fetch("/api/race", { method: "POST", headers: { "Content-Type": "application/json" },
+                             body: JSON.stringify({ race: ev.target.value }) });
+});
+
 function isOut(d) { return S.lap - (S.lapNo[d] ?? 0) > 2; }
 function renderBoard() {
-  const order = Object.keys(S.cars).sort((a, b) =>
+  const order = Object.keys(S.drivers).sort((a, b) =>
     isOut(a) - isOut(b) || (S.pos[a] ?? 99) - (S.pos[b] ?? 99));
   $("board").tBodies[0].innerHTML = order.map(d => {
     const g = S.gaps[d] || {}, t = S.tyre[d], p = S.pos[d], out = isOut(d);
@@ -166,12 +180,13 @@ function renderBoard() {
 }
 
 function renderDetail() {
-  const c = S.cars[S.selected];
-  $("who").textContent = c ? `${S.selected}  ${S.drivers[S.selected]?.name ?? ""}  ${S.drivers[S.selected]?.team ?? ""}` : "Click a driver";
-  if (!c) return;
+  const c = S.cars[S.selected], d = S.drivers[S.selected];
+  $("who").textContent = S.selected ? `${S.selected}  ${d?.name ?? ""}  ${d?.team ?? ""}${c ? "" : "  (no car telemetry for this race)"}` : "Click a driver";
+  if (!c) { ["speed", "gear", "thr", "brk", "rpm"].forEach(k => $("v-" + k).textContent = "-"); return; }
   $("v-speed").textContent = c.speed; $("v-gear").textContent = c.gear; $("v-thr").textContent = c.throttle;
   $("v-brk").textContent = c.brake ? "ON" : "off"; $("v-rpm").textContent = c.rpm;
 }
+
 function renderHeader() {
   const m = Math.floor(S.raceT / 60), s = Math.floor(S.raceT % 60);
   $("clock").textContent = `Race clock ${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
@@ -201,5 +216,5 @@ function connect() {
   ws.onmessage = ev => { const m = JSON.parse(ev.data); m.type === "snapshot" ? onSnapshot(m) : onBatch(m); };
   ws.onclose = () => { $("conn").textContent = "disconnected, retrying..."; $("conn").className = "bad"; setTimeout(connect, 2000); };
 }
-fitCanvas(mapCv); fitCanvas(traceCv); connect(); frame();
+fitCanvas(mapCv); fitCanvas(traceCv); connect(); frame(); loadRaces();
 </script></body></html>

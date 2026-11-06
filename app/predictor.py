@@ -1,3 +1,4 @@
+import json
 import os
 
 import joblib
@@ -33,20 +34,27 @@ def win_probs(positions, gaps, lap, total_laps):
     return {d: round(v / z, 4) for d, v in ex.items()}
 
 MODEL_PATH = os.environ.get("PITWALL_MODEL", "models/win_model.joblib")
-_model = None
+_models = {}
 
 
-def _load():
-    global _model
-    if _model is None:
-        _model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else False
-        print("win model loaded" if _model else f"no model at {MODEL_PATH}: using the heuristic")
-    return _model
+def model_for(race=None):
+    """The model that never saw this race (its cross-validation fold), else the default model."""
+    path = MODEL_PATH
+    try:
+        with open("models/race_fold.json") as f:
+            fold = json.load(f).get(race)
+        if fold is not None:
+            path = f"models/fold_{fold}.joblib"
+    except OSError:
+        pass
+    if path not in _models:
+        _models[path] = joblib.load(path) if os.path.exists(path) else False
+        print(f"loaded {path}" if _models[path] else f"no model at {path}: using the heuristic")
+    return _models[path]
 
 
-def live_probs(positions, gaps, last_lap, durs, lap, total_laps):
-    """(probabilities, source). Uses the trained model; falls back to the heuristic."""
-    model, built = _load(), build_rows(positions, gaps, last_lap, durs, lap, total_laps)
+def live_probs(positions, gaps, last_lap, durs, lap, total_laps, race=None):
+    model, built = model_for(race), build_rows(positions, gaps, last_lap, durs, lap, total_laps)
     if not model or built is None:
         return win_probs(positions, gaps, lap, total_laps), "heuristic"
     drivers, rows = built

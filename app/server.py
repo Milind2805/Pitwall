@@ -2,14 +2,15 @@
 
 import asyncio
 import json
+import glob
 import os
 import time
 from contextlib import asynccontextmanager
 
 import pandas as pd
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
-
+from fastapi.responses import JSONResponse
 from app.replayer import all_events
 from app.predictor import live_probs
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
@@ -17,7 +18,9 @@ from app.features import build_rows
 from app.predictor import live_probs
 from app.qf_client import QueueForge
 
-DATA_DIR = os.environ.get("PITWALL_DATA", "data/2024_Monza")
+RACES_DIR = "data"
+current = {"name": os.path.basename(os.path.normpath(os.environ.get("PITWALL_DATA", "data/2024_Monza"))),
+           "task": None}
 SPEED = float(os.environ.get("PITWALL_SPEED", "20"))
 START = float(os.environ.get("PITWALL_START", "0"))
 TICK = 0.05            # seconds between batches
@@ -40,7 +43,7 @@ class RaceState:
 
     def __init__(self):
         self.reset()
-
+        self.race=""
     def reset(self):
             self.run_id = time.time_ns()
             self.race_t = 0.0
@@ -79,7 +82,7 @@ class RaceState:
     def snapshot(self, drivers):
         return {"type": "snapshot", "race_t": round(self.race_t, 2), "drivers": drivers,
                 "cars": self.cars, "positions": self.positions, "gaps": self.gaps,
-                "laps": self.laps, "prediction": self.prediction}
+                "laps": self.laps, "prediction": self.prediction, "race": self.race}
 
 
 state = RaceState()
@@ -89,10 +92,40 @@ stats = {"events_sent": 0, "batches": 0, "dropped_messages": 0, "resyncs": 0,
 drivers_info = {}
 
 
-def load_drivers():
-    df = pd.read_csv(os.path.join(DATA_DIR, "drivers.csv"))
+def load_drivers(name):
+    df = pd.read_csv(os.path.join(RACES_DIR, name, "drivers.csv"))
     return {r.name_acronym: {"name": r.full_name, "team": r.team_name, "colour": f"#{r.team_colour}"}
             for r in df.itertuples()}
+
+
+def list_races():
+    out = []
+    for d in glob.glob(os.path.join(RACES_DIR, "20*_*")):
+        need = ("drivers.csv", "laps.csv", "positions.csv", "intervals.csv", "session.json")
+        if not all(os.path.exists(os.path.join(d, f)) for f in need):
+            continue
+        with open(os.path.join(d, "session.json")) as f:
+            s = json.load(f)
+        out.append({"name": os.path.basename(d), "label": f"{s['year']} {s['circuit']}", "date": s["date_start"],
+                    "telemetry": os.path.exists(os.path.join(d, "telemetry.csv.gz"))})
+    return sorted(out, key=lambda r: r["date"])
+
+
+async def start_race(name):
+    task = current["task"]
+    if task:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    current["name"] = name
+    drivers_info.clear()
+    drivers_info.update(load_drivers(name))
+    state.reset()                              # also gives the new race a new run id, so old jobs are dropped as stale
+    state.race = name
+    publish(json.dumps(state.snapshot(drivers_info)))     # browsers clear at once; the loop sends the real start
+    current["task"] = asyncio.create_task(race_loop(name))
 
 
 def publish(message):
@@ -122,22 +155,24 @@ async def submit_job(run, lap, payload):
         stats["submit_failures"] += 1
         print(f"could not submit prediction job: {ex}")
 
-async def race_loop():
-    events = await asyncio.to_thread(lambda: list(all_events(DATA_DIR)))
+async def race_loop(name):
+    data_dir = os.path.join(RACES_DIR, name)
+    events = await asyncio.to_thread(lambda: list(all_events(data_dir)))
     for e in events:
         if e["type"] == "gap":
             e["gap_to_leader"], e["interval"] = _num(e["gap_to_leader"]), _num(e["interval"])
     total_laps = max((e["lap_number"] for e in events if e["type"] == "lap"), default=0)
-    print(f"Loaded {len(events)} events ({total_laps} laps). Replaying at {SPEED}x from t={START}s")
+    print(f"{name}: loaded {len(events)} events ({total_laps} laps). Replaying at {SPEED}x from t={START}s")
 
     while True:
         state.reset()
+        state.race = name
         i = 0
         while i < len(events) and events[i]["t"] < START:      # catch up silently
             state.update(events[i])
             i += 1
         state.race_t = START
-        publish(json.dumps(state.snapshot(drivers_info)))     # every browser starts fresh when the race (re)starts
+        publish(json.dumps(state.snapshot(drivers_info)))
         begin = time.monotonic()
         while i < len(events):
             race_t = START + (time.monotonic() - begin) * SPEED
@@ -146,24 +181,24 @@ async def race_loop():
                 state.update(events[i])
                 batch.append(events[i])
                 i += 1
-                if state.lap < total_laps and state.ready_for_prediction():
-                    state.pred_lap = state.lap
-                    built = build_rows(state.positions, state.gaps, state.last_lap,
+            if state.lap < total_laps and state.ready_for_prediction():
+                state.pred_lap = state.lap
+                built = build_rows(state.positions, state.gaps, state.last_lap,
                                    state.durs, state.lap, total_laps) if USE_QF else None
                 if built:
                     drivers, rows = built
-                    payload = json.dumps({"run": state.run_id, "lap": state.lap, "drivers": drivers, "rows": rows},
-                                         separators=(",", ":"))          # no spaces: one safe token for the text protocol
-                    t = asyncio.create_task(submit_job(state.run_id, state.lap, payload))      # never makes the stream wait for the broker
+                    payload = json.dumps({"run": state.run_id, "race": name, "lap": state.lap,
+                                          "drivers": drivers, "rows": rows}, separators=(",", ":"))
+                    t = asyncio.create_task(submit_job(state.run_id, state.lap, payload))
                     _tasks.add(t)
                     t.add_done_callback(_tasks.discard)
-                else:                                                   # queue off, or too few cars: compute in-process
+                else:
                     probs, source = live_probs(state.positions, state.gaps, state.last_lap,
-                                               state.durs, state.lap, total_laps)
+                                               state.durs, state.lap, total_laps, name)
                     pred = {"type": "prediction", "t": round(race_t, 2), "lap": state.lap,
                             "source": source, "probs": probs}
                     state.update(pred)
-                    batch.append(pred)                                   # NEW
+                    batch.append(pred)
             state.race_t = race_t
             if batch:
                 publish(json.dumps({"type": "batch", "race_t": round(race_t, 2), "events": batch}))
@@ -173,15 +208,12 @@ async def race_loop():
         print("Race finished. Restarting in 5 s.")
         await asyncio.sleep(5)
 
-
 @asynccontextmanager
 async def lifespan(_app):
-    drivers_info.update(load_drivers())
-    task = asyncio.create_task(race_loop())
+    await start_race(current["name"])
     yield
-    task.cancel()
-
-
+    if current["task"]:
+        current["task"].cancel()
 app = FastAPI(title="PitWall", lifespan=lifespan)
 
 
@@ -217,6 +249,20 @@ async def post_prediction(request: Request):
     publish(json.dumps({"type": "batch", "race_t": round(state.race_t, 2), "events": [pred]}))
     stats["predictions_via_queue"] += 1
     return {"ok": True}
+
+@app.get("/api/races")
+def api_races():
+    return {"current": current["name"], "races": list_races()}
+
+
+@app.post("/api/race")
+async def select_race(request: Request):
+    name = (await request.json()).get("race")
+    if name not in {r["name"] for r in list_races()}:
+        return JSONResponse({"ok": False, "reason": "unknown race"}, status_code=404)
+    if name != current["name"]:
+        await start_race(name)
+    return {"ok": True, "race": name}
 
 
 if os.path.isdir("app/static"):                      # the dashboard page (Phase 3)

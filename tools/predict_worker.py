@@ -10,19 +10,21 @@ import urllib.request
 
 sys.path.insert(0, os.getcwd())
 
-import joblib
 import pandas as pd
 
 from app.features import FEATURES
+from app.predictor import model_for
 
 HOST, _, PORT = os.environ.get("QUEUEFORGE_ADDR", "127.0.0.1:9000").partition(":")
 SERVER = os.environ.get("PITWALL_URL", "http://127.0.0.1:8000")
-MODEL_PATH = os.environ.get("PITWALL_MODEL", "models/win_model.joblib")
 
 
-def run_job(model, payload):
+def run_job(payload):
     job = json.loads(payload)
-    print(f"predict lap {job['lap']}")
+    print(f"predict {job.get('race')} lap {job['lap']}")
+    model = model_for(job.get("race"))
+    if not model:
+        raise RuntimeError("no model file")
     p = model.predict_proba(pd.DataFrame(job["rows"], columns=FEATURES))[:, 1]
     p = p / max(p.sum(), 1e-12)
     result = {"run": job["run"], "lap": job["lap"], "source": "model",
@@ -33,7 +35,6 @@ def run_job(model, payload):
 
 
 def main():
-    model = joblib.load(MODEL_PATH)
     f = socket.create_connection((HOST, int(PORT))).makefile("rw", encoding="utf-8", newline="\n")
 
     def cmd(line):
@@ -53,7 +54,7 @@ def main():
         try:
             if job_type != "predict":
                 raise ValueError(f"unknown job type {job_type}")
-            run_job(model, payload)
+            run_job(payload)
             cmd(f"ACK {job_id}")
         except Exception as ex:                       # the broker retries it, then dead-letters after 3 failures
             print(f"job {job_id} failed: {ex}")
