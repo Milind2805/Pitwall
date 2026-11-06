@@ -42,14 +42,17 @@ class RaceState:
     """Latest known facts, so a browser that joins late can be brought up to date."""
 
     def __init__(self):
+        self.race = ""
+        self.total_laps = 0
         self.reset()
-        self.race=""
+    
     def reset(self):
             self.run_id = time.time_ns()
             self.race_t = 0.0
             self.lap = 0
             self.pred_lap = 0
             self.prediction = None
+            self.pred_history = []
             self.cars, self.positions, self.gaps, self.laps = {}, {}, {}, []
             self.last_lap, self.durs = {}, {}
 
@@ -69,8 +72,9 @@ class RaceState:
             if e.get("lap_duration") is not None:
                 self.durs.setdefault(d, []).append(e["lap_duration"])
                 del self.durs[d][:-3]                      # keep the last 3, for the pace feature
-        elif kind == "prediction":
-            self.prediction = e
+            elif kind == "prediction":
+                self.prediction = e
+                self.pred_history.append({"lap": e["lap"], "probs": e["probs"]})
 
     def ready_for_prediction(self):
         """Once per lap, when half the field has completed it (training snapshots the same moment)."""
@@ -82,7 +86,7 @@ class RaceState:
     def snapshot(self, drivers):
         return {"type": "snapshot", "race_t": round(self.race_t, 2), "drivers": drivers,
                 "cars": self.cars, "positions": self.positions, "gaps": self.gaps,
-                "laps": self.laps, "prediction": self.prediction, "race": self.race}
+                "laps": self.laps, "prediction": self.prediction, "race": self.race, "total_laps": self.total_laps, "pred_history": self.pred_history}
 
 
 state = RaceState()
@@ -124,6 +128,7 @@ async def start_race(name):
     drivers_info.update(load_drivers(name))
     state.reset()                              # also gives the new race a new run id, so old jobs are dropped as stale
     state.race = name
+    state.total_laps = 0
     publish(json.dumps(state.snapshot(drivers_info)))     # browsers clear at once; the loop sends the real start
     current["task"] = asyncio.create_task(race_loop(name))
 
@@ -167,6 +172,7 @@ async def race_loop(name):
     while True:
         state.reset()
         state.race = name
+        state.total_laps = total_laps
         i = 0
         while i < len(events) and events[i]["t"] < START:      # catch up silently
             state.update(events[i])

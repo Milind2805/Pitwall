@@ -12,6 +12,9 @@
   .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; min-width:0; }
   .wide { grid-column:1 / -1; }
   #map { width:100%; height:430px; display:block; }
+  #pchart { width:100%; height:220px; display:block; margin:6px 0; }
+  body.notel main { grid-template-columns:1fr; }
+  body.notel #mapPanel, body.notel #detailPanel { display:none; }
   tr.out { opacity:.45; } tr.out td:nth-child(3) { color:var(--bad); font-weight:600; }
   table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
   th { text-align:left; color:var(--dim); font-weight:500; padding:4px 6px; font-size:12px; }
@@ -33,11 +36,11 @@
   <span id="rate"></span><span id="conn" class="bad">connecting...</span>
 </header>
 <main>
-  <section class="panel"><canvas id="map"></canvas></section>
+  <section class="panel"><canvas id="mapPanel"></canvas></section>
   <section class="panel">
     <table id="board"><thead><tr><th>P</th><th>Driver</th><th>Gap</th><th>Interval</th><th>Last lap</th><th>Tyre</th></tr></thead><tbody></tbody></table>
   </section>
-  <section class="panel wide">
+  <section class="panel wide" id="detailPanel">
     <div id="who" style="font-weight:600">Click a driver</div>
     <div class="stats">
       <div class="stat"><div class="v" id="v-speed">-</div><div class="l">km/h</div></div>
@@ -49,17 +52,20 @@
     <canvas id="trace"></canvas>
     <div class="legend">Last 60 race seconds: speed (white), throttle (green), braking (red bands)</div>
   </section>
-  <section class="panel wide">
+    <section class="panel wide">
     <div style="font-weight:600">Win probability <span id="predlap" style="color:var(--dim);font-weight:400"></span></div>
+    <canvas id="pchart"></canvas>
+    <div class="legend">Top 4 by current probability, plus the driver you click in the leaderboard.</div>
     <div id="pred"></div>
   </section>
 </main>
 <script>
-const S = { drivers:{}, cars:{}, pos:{}, gaps:{}, lastLap:{}, tyre:{}, lap:0, raceT:0, lapNo:{}, selected:null ,pred:null};
+const S = { drivers:{}, cars:{}, pos:{}, gaps:{}, lastLap:{}, tyre:{}, lap:0, raceT:0, lapNo:{}, selected:null ,pred:null, hist:[], tel:{}, totalLaps:0};
 const track = [];                       // x,y points of one car, draws the circuit outline
 let refDriver = null, trace = [], bounds = null, msgs = 0, evs = 0;
 
 const $ = id => document.getElementById(id);
+const pchartCv = $("pchart");
 const mapCv = $("map"), traceCv = $("trace");
 const TYRE = { SOFT:"#ff6b6b", MEDIUM:"#fcc419", HARD:"#e6e6e6", INTERMEDIATE:"#51cf66", WET:"#4dabf7" };
 
@@ -96,11 +102,47 @@ function apply(e) {
     if (e.driver === S.selected) pushTrace(e);
   } else if (e.type === "position") S.pos[e.driver] = e.position;
   else if (e.type === "gap") S.gaps[e.driver] = { g: e.gap_to_leader, i: e.interval };
-  else if (e.type === "prediction") S.pred = e;
+  else if (e.type === "prediction") { S.pred = e; S.hist.push({ lap: e.lap, probs: e.probs }); }
   else if (e.type === "lap") noteLap(e);
 }
+
+function applyTel(race) {          // hide the empty map and trace panels for timing-only races
+  document.body.classList.toggle("notel", S.tel[race] === false);
+  setTimeout(() => { fitCanvas(mapCv); fitCanvas(traceCv); fitCanvas(pchartCv); }, 0);
+}
+
+function drawPChart() {
+  const cv = pchartCv, g = cv.getContext("2d"), r = devicePixelRatio || 1;
+  g.clearRect(0, 0, cv.width, cv.height);
+  const H = S.hist, W = cv.width, Ht = cv.height, L = 38 * r, R = 48 * r, T = 8 * r, B = 18 * r;
+  const maxLap = Math.max(S.totalLaps || 0, H.length ? H[H.length - 1].lap : 0, 2);
+  const x = lap => L + (lap - 1) / (maxLap - 1) * (W - L - R);
+  const y = p => T + (1 - p) * (Ht - T - B);
+  g.font = (11 * r) + "px system-ui"; g.lineWidth = 1; g.strokeStyle = "#262a33"; g.fillStyle = "#8a8f98";
+  [0, .25, .5, .75, 1].forEach(p => {
+    g.beginPath(); g.moveTo(L, y(p)); g.lineTo(W - R, y(p)); g.stroke();
+    g.fillText(Math.round(p * 100) + "%", 4 * r, y(p) + 4 * r);
+  });
+  g.fillText("lap 1", L, Ht - 4 * r); g.fillText("lap " + maxLap, W - R - 40 * r, Ht - 4 * r);
+  if (!H.length) return;
+  const last = H[H.length - 1].probs;
+  const show = Object.keys(last).sort((a, b) => last[b] - last[a]).slice(0, 4);
+  if (S.selected && last[S.selected] !== undefined && !show.includes(S.selected)) show.push(S.selected);
+  show.forEach(d => {
+    g.strokeStyle = colour(d); g.fillStyle = colour(d); g.lineWidth = (d === S.selected ? 3.5 : 2) * r;
+    g.beginPath(); let started = false, lx = 0, ly = 0;
+    H.forEach(h => {
+      const p = h.probs[d]; if (p === undefined) return;
+      lx = x(h.lap); ly = y(p); started ? g.lineTo(lx, ly) : g.moveTo(lx, ly); started = true;
+    });
+    g.stroke(); g.fillText(d, lx + 5 * r, ly + 4 * r);
+  });
+}
+
 function onSnapshot(m) {
   Object.assign(S, { drivers:m.drivers, cars:m.cars, pos:m.positions, raceT:m.race_t, lastLap:{}, tyre:{}, lap:0, lapNo:{}, selected:S.selected, pred:m.prediction });
+  S.hist = m.pred_history || []; S.totalLaps = m.total_laps || 0;
+  applyTel(m.race);
   if (m.race) $("race").value = m.race;
   $("conn").textContent = "live"; $("conn").className = "ok";
   S.gaps = {}; for (const d in m.gaps) S.gaps[d] = { g: m.gaps[d].gap_to_leader, i: m.gaps[d].interval };
@@ -156,9 +198,13 @@ function drawTrace() {
 
 async function loadRaces() {
   const r = await (await fetch("/api/races")).json();
-  $("race").innerHTML = r.races.map(x => `<option value="${x.name}">${x.label}${x.telemetry ? "" : " (no telemetry)"}</option>`).join("");
+  r.races.forEach(x => S.tel[x.name] = x.telemetry);
+  $("race").innerHTML = r.races.map(x =>
+    `<option value="${x.name}">${x.label}${x.telemetry ? " (map + telemetry)" : ""}</option>`).join("");
   $("race").value = r.current;
+  applyTel(r.current);
 }
+
 $("race").addEventListener("change", async ev => {
   $("conn").textContent = "loading race..."; $("conn").className = "bad";
   await fetch("/api/race", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -205,10 +251,10 @@ $("board").addEventListener("click", ev => {
   const row = ev.target.closest("tr.row"); if (!row) return;
   S.selected = row.dataset.d; trace = []; renderBoard(); renderDetail();
 });
-function frame() { drawMap(); drawTrace(); requestAnimationFrame(frame); }
+function frame() { drawMap(); drawTrace(); drawPChart(); requestAnimationFrame(frame); }
 setInterval(() => { ensureSelected(); renderBoard(); renderDetail(); renderHeader(); renderPred(); }, 250);
 setInterval(() => { $("rate").textContent = `${msgs} msg/s, ${evs} events/s`; msgs = evs = 0; }, 1000);
-addEventListener("resize", () => { fitCanvas(mapCv); fitCanvas(traceCv); });
+addEventListener("resize", () => { fitCanvas(mapCv); fitCanvas(traceCv); fitCanvas(pchartCv);});
 
 function connect() {
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
@@ -216,5 +262,5 @@ function connect() {
   ws.onmessage = ev => { const m = JSON.parse(ev.data); m.type === "snapshot" ? onSnapshot(m) : onBatch(m); };
   ws.onclose = () => { $("conn").textContent = "disconnected, retrying..."; $("conn").className = "bad"; setTimeout(connect, 2000); };
 }
-fitCanvas(mapCv); fitCanvas(traceCv); connect(); frame(); loadRaces();
+fitCanvas(mapCv); fitCanvas(traceCv); connect(); frame(); loadRaces(); fitCanvas(pchartCv);
 </script></body></html>
