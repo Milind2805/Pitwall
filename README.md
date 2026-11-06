@@ -2,13 +2,13 @@
 
 A race dashboard with real-time win probabilities. It replays recorded F1 races (46 races from 2023 and 2024, from the free [OpenF1](https://openf1.org) API) over a WebSocket, so the browser sees positions, gaps and tyres arrive as if the race were live, and a trained model estimates each driver's chance of winning after every lap. Pick a race from the dropdown; every race is scored by a model that never saw it.
 
-![Dashboard with car telemetry (2024 Italian GP)](docs/pitwall_dashboard.png)
+![Dashboard with car telemetry (2024 Italian GP)](docs/Pitwall_Dashboard.png)
 
-![Race selector (2024 Singapore GP, timing data only)](docs/pitwall_race_selector.png)
+![Pitwall Probability Chart](docs/Pitwall_Probability_Chart.png)
 
 > It replays recorded races. Nothing in the streaming or prediction path depends on the data being recorded, but no live feed is wired up in this repo.
->
-> Only the 2024 Italian GP has car telemetry (track map and speed trace). The other 45 races show the leaderboard, tyres and win probabilities from timing data only.
+
+>It has the telemetry and map of Brazil , Baku , Monza and Hungary and the rest of the races have the timing screens and win-probability chart and prediction chart. 
 
 ## What it does
 
@@ -77,7 +77,7 @@ The server builds the feature rows for a lap and submits one job (`SUBMIT <lap> 
 
 Set `PITWALL_QF=1` to use the queue. Without it the server predicts in-process.
 
-![QueueForge dashboard](docs/queueforge_dashboard.png)
+![QueueForge dashboard](docs/Queueforge_Dashboard.png)
 
 Observed in a replay at 20x: 26 laps produced 26 jobs, with 0 dead, 0 visibility timeouts and a queue depth of at most 1.
 
