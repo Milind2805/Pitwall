@@ -1,16 +1,20 @@
 # PitWall
 
-A live F1 race dashboard with real-time win probabilities. It replays a recorded race (the 2024 Italian GP, from the free [OpenF1](https://openf1.org) API) over a WebSocket, so the browser sees cars, gaps, tyres and telemetry arrive as if the race were live, and a trained model estimates each driver's chance of winning after every lap.
+A race dashboard with real-time win probabilities. It replays recorded F1 races (46 races from 2023 and 2024, from the free [OpenF1](https://openf1.org) API) over a WebSocket, so the browser sees positions, gaps and tyres arrive as if the race were live, and a trained model estimates each driver's chance of winning after every lap. Pick a race from the dropdown; every race is scored by a model that never saw it.
 
-![Dashboard](docs/Pitwall_Dashboard.png)
+![Dashboard with car telemetry (2024 Italian GP)](docs/pitwall_dashboard.png)
 
-> It replays a recorded race. Nothing in the streaming or prediction path depends on the data being recorded, but no live feed is wired up in this repo.
+![Race selector (2024 Singapore GP, timing data only)](docs/pitwall_race_selector.png)
+
+> It replays recorded races. Nothing in the streaming or prediction path depends on the data being recorded, but no live feed is wired up in this repo.
+>
+> Only the 2024 Italian GP has car telemetry (track map and speed trace). The other 45 races show the leaderboard, tyres and win probabilities from timing data only.
 
 ## What it does
 
-- Streams about 385,000 events for a 53-lap race (car telemetry for 20 cars, plus positions, gaps and laps) in time order, at a configurable speed (default 20x).
-- A browser that joins late gets a full snapshot first, then batches of events about 20 times a second.
-- The dashboard is one HTML file with no build step: a canvas track map, a leaderboard with gaps and tyres, a speed / throttle / brake trace for the selected driver, and win-probability bars. Cars that have stopped completing laps are marked OUT.
+- Streams a race in time order at a configurable speed (default 20x). The Italian GP is about 385,000 events (car telemetry for 20 cars, plus positions, gaps and laps).
+- A race selector in the header switches the replay for everyone connected. A browser that joins late gets a full snapshot first, then batches of events about 20 times a second.
+- The dashboard is one HTML file with no build step: a leaderboard with gaps and tyres, win-probability bars, and (where telemetry exists) a canvas track map and a speed / throttle / brake trace for the selected driver. Cars that have stopped completing laps are marked OUT.
 - After every lap the server asks a trained model for win probabilities. That work runs as a job on [QueueForge](https://github.com/Milind2805/QueueForge), my own C++ job queue.
 
 ## Architecture
@@ -20,6 +24,7 @@ flowchart LR
   OF["OpenF1 API"] -->|fetch tools| D[("CSV data")]
   D --> R["Replayer"] --> S["FastAPI server<br/>RaceState"]
   S -->|"WebSocket: snapshot + batches"| B["Browser dashboard"]
+  B -->|"POST /api/race"| S
   S -->|"1 job per lap (SUBMIT)"| Q["QueueForge broker (C++)"]
   Q -->|FETCH / ACK| W["Python worker<br/>win model"]
   W -->|"POST /internal/prediction"| S
@@ -54,18 +59,21 @@ flowchart LR
 
 **Calibration** (out of fold): when the model said 90 to 100%, the car won 92.8% of the time (mean prediction 95.5%, 1,002 rows). At 60 to 80% it was 72.2% against 71.1%. At the bottom end, cars given under 2% won 0.4% of the time against a mean prediction of 0.1%: the model is slightly too sure that back-markers cannot win.
 
-**A miss worth knowing about.** In the live demo the model is trained without 2024 Monza. At lap 33 it gave the eventual winner (Leclerc, on a one-stop strategy) only about 5%. The features cannot see which strategies the other cars still have to run, and that is a limit of the data, not a bug.
+**The dashboard never shows in-sample predictions.** The 8 cross-validation models are saved (`models/fold_k.joblib`, about 370 KB each) together with a map of which race each one left out (`models/race_fold.json`). When you pick a race, the server (or the queue worker) uses the model that never saw it.
+
+**A miss worth knowing about.** At lap 33 of the 2024 Italian GP the model gave the eventual winner (Leclerc, on a one-stop strategy) about 6%. The features cannot see which strategies the other cars still have to run, and that is a limit of the data, not a bug. Pick other races and compare: some calls are easy (a car that leads from the start), others are not.
 
 ## Engineering notes
 
 - **Backpressure.** Each browser has a bounded queue. If one falls behind, the server drops its backlog and sends a fresh snapshot instead of leaving it with a hole in its state. Resyncs are counted in `/api/status`.
-- **Training and serving use the same features.** `tools/check_features.py` replays Monza through the live server code and compares the result with the training rows. It caught a look-ahead leak in the first version of the dataset (training used a lap the live server could not have seen yet). Fixing it moved the whole-race log loss from 0.754 to 0.782, which is the honest number. After the fix every feature matches; gap and interval match on 98% of rows (mean difference 0.03 s and 0.08 s).
+- **Training and serving use the same features.** `tools/check_features.py` replays the Italian GP through the live server code and compares the result with the training rows. It caught a look-ahead leak in the first version of the dataset (training used a lap the live server could not have seen yet). Fixing it moved the whole-race log loss from 0.754 to 0.782, which is the honest number. After the fix every feature matches; gap and interval match on 98% of rows (mean difference 0.03 s and 0.08 s).
 - **An OpenF1 quirk.** The position endpoint only records changes, so a driver who starts first and never loses the place has no rows inside the race window. Three 2024 races (Monaco, Singapore, Abu Dhabi) had no detectable winner, and other races silently lacked their non-moving drivers. The fetcher now also reads the pre-session grid rows.
+- **Switching races.** Each start of a race gets a new run id. Results from the queue carry the run id they were built for, so anything still in flight from the previous race is dropped. The race name sent by the browser is checked against the list of available races, and a path is never built from raw input.
 - **Retired or missing cars.** A car with no completed lap for 3 or more laps is shown as OUT and excluded from the predictions. This rule cannot tell a retirement from missing data.
 
 ## QueueForge integration
 
-The server builds the feature rows for a lap and submits one job (`SUBMIT <lap> predict <json>`). The priority is the lap number, so after any backlog the newest lap is served first. A Python worker `FETCH`es the job, runs the model, POSTs the result to `/internal/prediction` and ACKs it. Each result carries a run id and a lap number, and the server drops results from an earlier run of the race or older than the latest prediction. Delivery is at-least-once, so duplicates can happen and are harmless.
+The server builds the feature rows for a lap and submits one job (`SUBMIT <lap> predict <json>`; the JSON carries the race name, run id, lap, drivers and feature rows). The priority is the lap number, so after any backlog the newest lap is served first. A Python worker `FETCH`es the job, loads the model that left that race out, runs it, POSTs the result to `/internal/prediction` and ACKs. The server drops results from an earlier run of the race or older than the latest prediction. Delivery is at-least-once, so duplicates can happen and are harmless.
 
 Set `PITWALL_QF=1` to use the queue. Without it the server predicts in-process.
 
@@ -86,14 +94,14 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 1. data (the API is rate-limited, so this takes a while; everything is cached on disk)
-python tools/fetch_openf1.py 2024 Monza      # full telemetry for the race that gets replayed
-python tools/fetch_summary.py 2023
+python tools/fetch_openf1.py 2024 Monza      # full telemetry for the race with the track map
+python tools/fetch_summary.py 2023           # timing data for every race of the season
 python tools/fetch_summary.py 2024
 python tools/build_dataset.py                # writes data/lap_dataset.csv
 
-# 2. model
+# 2. models
 python tools/backtest.py                     # cross-validated scores and calibration
-python tools/train_final.py 2024_Monza       # trains without the replayed race
+python tools/train_folds.py                  # 8 models; each race is shown with the one that never saw it
 python tools/check_features.py               # live features == training features
 
 # 3. run (predictions in-process)
@@ -110,37 +118,45 @@ PITWALL_QF=1 PITWALL_SPEED=20 uvicorn app.server:app --port 8000 # terminal 3
 
 | variable | default | meaning |
 |---|---|---|
-| `PITWALL_DATA` | `data/2024_Monza` | folder produced by `tools/fetch_openf1.py` |
+| `PITWALL_DATA` | `data/2024_Monza` | race that is on air at startup |
 | `PITWALL_SPEED` | `20` | replay speed, 1 = real time |
-| `PITWALL_START` | `0` | start this many seconds into the race |
+| `PITWALL_START` | `0` | start this many seconds into the race (applies to every race) |
 | `PITWALL_QF` | unset | `1` sends predictions through QueueForge |
-| `QUEUEFORGE_ADDR` | `127.0.0.1:9000` | broker address (`host:port`) |
-| `PITWALL_MODEL` | `models/win_model.joblib` | model file |
+| `QUEUEFORGE_ADDR` | `127.0.0.1:7000` | broker address (`host:port`) |
+| `PITWALL_MODEL` | `models/win_model.joblib` | fallback model for a race that has no fold model |
 | `PITWALL_URL` | `http://127.0.0.1:8000` | where the worker POSTs results |
 
-`GET /api/status` shows clients, events sent, dropped messages, resyncs and the queue counters.
+| endpoint | meaning |
+|---|---|
+| `WS /ws` | snapshot, then batches of events |
+| `GET /api/races` | available races and whether each has car telemetry |
+| `POST /api/race` | `{"race": "2024_Singapore"}` puts that race on air |
+| `GET /api/status` | clients, events sent, dropped messages, resyncs and the queue counters |
 
 ## Layout
 
 ```
 app/
-  server.py       WebSocket server, RaceState, queue submit, /api/status
+  server.py       WebSocket server, RaceState, race selection, queue submit, API
   replayer.py     merges telemetry, laps, positions and gaps into one time-ordered stream
   features.py     the model's features, shared by training and serving
-  predictor.py    model loading, baseline formula, live_probs()
+  predictor.py    per-race model lookup, baseline formula, live_probs()
   qf_client.py    async client for the QueueForge text protocol
   static/index.html   the dashboard
 tools/
   fetch_openf1.py, fetch_summary.py   data download (cached, throttled, retries)
-  build_dataset.py, backtest.py, train_final.py, check_features.py
+  build_dataset.py, backtest.py, train_folds.py, check_features.py
   predict_worker.py                   QueueForge worker
   ws_client.py, slow_client.py        load and slow-client tests
+models/                               8 fold models and race_fold.json
 ```
 
 ## Limitations
 
-- It replays a recorded race; there is no live feed.
-- The model only sees what is on the board. It cannot know strategy a team has not yet used (see the Monza lap 33 miss above).
+- It replays recorded races; there is no live feed.
+- One race is on air at a time, for every connected browser.
+- Only the 2024 Italian GP has car telemetry. The other races have no track map or speed trace.
+- The model only sees what is on the board. It cannot know strategy a team has not yet used (see the Italian GP lap 33 miss above).
 - Two seasons of data. Rows from one race are highly correlated, so the calibration table is noisier than its row counts suggest.
 - The baseline is a simple hand-written formula. A tuned position-and-gap-only model would be a fairer comparison and has not been tried.
 - QueueForge is a single broker on one machine, so there is no failover.
