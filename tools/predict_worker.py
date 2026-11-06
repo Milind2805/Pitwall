@@ -10,12 +10,13 @@ import urllib.request
 
 sys.path.insert(0, os.getcwd())
 
+import joblib
 import pandas as pd
 
 from app.features import FEATURES
-from app.predictor import model_for
+from app.predictor import MODEL_PATH, model_for
 
-HOST, _, PORT = os.environ.get("QUEUEFORGE_ADDR", "127.0.0.1:9000").partition(":")
+HOST, _, PORT = os.environ.get("QUEUEFORGE_ADDR", "127.0.0.1:7000").partition(":")
 SERVER = os.environ.get("PITWALL_URL", "http://127.0.0.1:8000")
 
 
