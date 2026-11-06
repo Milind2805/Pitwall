@@ -13,9 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from app.replayer import all_events
 from app.predictor import live_probs
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from app.features import build_rows
-from app.predictor import live_probs
 from app.qf_client import QueueForge
 
 RACES_DIR = "data"
@@ -71,11 +69,10 @@ class RaceState:
             self.last_lap[d] = e
             if e.get("lap_duration") is not None:
                 self.durs.setdefault(d, []).append(e["lap_duration"])
-                del self.durs[d][:-3]                      # keep the last 3, for the pace feature
-            elif kind == "prediction":
-                self.prediction = e
-                self.pred_history.append({"lap": e["lap"], "probs": e["probs"]})
-
+                del self.durs[d][:-3]
+        elif kind == "prediction":
+            self.prediction = e
+            self.pred_history.append({"lap": e["lap"], "probs": e["probs"]})
     def ready_for_prediction(self):
         """Once per lap, when half the field has completed it (training snapshots the same moment)."""
         if self.lap <= self.pred_lap:

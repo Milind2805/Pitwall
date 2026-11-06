@@ -21,6 +21,7 @@ SERVER = os.environ.get("PITWALL_URL", "http://127.0.0.1:8000")
 
 def run_job(payload):
     job = json.loads(payload)
+    time.sleep(float(os.environ.get("WORKER_DELAY", "0")))     
     print(f"predict {job.get('race')} lap {job['lap']}")
     model = model_for(job.get("race"))
     if not model:

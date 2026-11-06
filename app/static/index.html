@@ -36,7 +36,7 @@
   <span id="rate"></span><span id="conn" class="bad">connecting...</span>
 </header>
 <main>
-  <section class="panel"><canvas id="mapPanel"></canvas></section>
+  <section class="panel" id="mapPanel"><canvas id="map"></canvas></section>
   <section class="panel">
     <table id="board"><thead><tr><th>P</th><th>Driver</th><th>Gap</th><th>Interval</th><th>Last lap</th><th>Tyre</th></tr></thead><tbody></tbody></table>
   </section>
@@ -240,8 +240,7 @@ function renderHeader() {
 }
 function renderPred() {
     const p = S.pred;
-    if (!p) { $("pred").innerHTML = '<span class="legend">waiting for the first lap...</span>';   $("predlap").textContent = `after lap ${p.lap} (${p.source})`; return; }
-    $("predlap").textContent = `after lap ${p.lap}`;
+    if (!p) { $("pred").innerHTML = '<span class="legend">waiting for the first lap...</span>'; $("predlap").textContent = ""; return; }
     $("pred").innerHTML = Object.entries(p.probs).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([d, v]) =>
       `<div class="prow"><span class="n">${d}</span><div style="flex:1"><div class="b" style="width:${(v * 100).toFixed(1)}%;background:${colour(d)}"></div></div>` +
       `<span class="p">${(v * 100).toFixed(1)}%</span></div>`).join("");
