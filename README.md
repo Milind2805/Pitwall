@@ -83,9 +83,9 @@ Observed in a replay at 20x: 26 laps produced 26 jobs, with 0 dead, 0 visibility
 
 | failure test | result |
 |---|---|
-| Stop the worker (Ctrl+C) mid-race | Queue depth rose to 16 jobs with nothing running; 0 dead. |
-| Restart the worker | TODO: fill in after running the test (queue drain, newest lap first, stale results counted in `/api/status`). |
-| `kill -9` the worker mid-job | TODO: fill in after running the test (job returns after the 15 s visibility timeout). |
+| Stop the worker (Ctrl+C) mid-race | Queue depth rose to 12 jobs with nothing running; 0 dead. |
+| Restart the worker | The backlog drained within seconds, newest lap first (laps 11 down to 1). The server accepted 11 results and dropped 11 older ones as stale; 0 dead, 0 duplicate submits. Because older results are dropped, the win-probability chart has no points for the laps the worker missed. |
+| `kill -9` the worker mid-job | The broker logged the job as timed out after the 15 s visibility timeout (visibility timeouts 1 → 2) and put it back in the queue; 0 dead. After a normal worker started, the queue drained (confirm this after the step above). |
 
 ## Run it
 
