@@ -77,7 +77,7 @@ The server builds the feature rows for a lap and submits one job (`SUBMIT <lap> 
 
 Set `PITWALL_QF=1` to use the queue. Without it the server predicts in-process.
 
-![QueueForge dashboard](docs/Queueforge_Dashboard.png)
+![QueueForge dashboard](docs/QueueForge_Dashboard.png)
 
 Observed in a replay at 20x: 26 laps produced 26 jobs, with 0 dead, 0 visibility timeouts and a queue depth of at most 1.
 
