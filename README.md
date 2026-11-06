@@ -155,7 +155,7 @@ models/                               8 fold models and race_fold.json
 
 - It replays recorded races; there is no live feed.
 - One race is on air at a time, for every connected browser.
-- Only the 2024 Italian GP has car telemetry. The other races have no track map or speed trace.
+- Only 4 races have car telemetry. The other races have no track map or speed trace.
 - The model only sees what is on the board. It cannot know strategy a team has not yet used (see the Italian GP lap 33 miss above).
 - Two seasons of data. Rows from one race are highly correlated, so the calibration table is noisier than its row counts suggest.
 - The baseline is a simple hand-written formula. A tuned position-and-gap-only model would be a fairer comparison and has not been tried.
