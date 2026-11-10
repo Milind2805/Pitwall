@@ -4,7 +4,7 @@ A race dashboard with real-time win probabilities. It replays recorded F1 races 
 
 ![Dashboard with car telemetry](docs/Pitwall_Dashboard.png)
 
-![Pitwall Probability Chart](docs/Pitwall_Probability_Chart.png)
+![Pitwall Probability Chart](docs/Pitwall_Prediction_Probability_Chart.png)
 
 > It replays recorded races. Nothing in the streaming or prediction path depends on the data being recorded, but no live feed is wired up in this repo.
 
