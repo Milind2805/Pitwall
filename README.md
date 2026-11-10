@@ -2,7 +2,7 @@
 
 A race dashboard with real-time win probabilities. It replays recorded F1 races (46 races from 2023 and 2024, from the free [OpenF1](https://openf1.org) API) over a WebSocket, so the browser sees positions, gaps and tyres arrive as if the race were live, and a trained model estimates each driver's chance of winning after every lap. Pick a race from the dropdown; every race is scored by a model that never saw it.
 
-![Dashboard with car telemetry (2024 Italian GP)](docs/Pitwall_Dashboard.png)
+![Dashboard with car telemetry](docs/Pitwall_Dashboard.png)
 
 ![Pitwall Probability Chart](docs/Pitwall_Probability_Chart.png)
 
