@@ -32,7 +32,7 @@ flowchart LR
 
 ## The win-probability model
 
-**Data.** Race summaries (laps, tyre stints, positions, gaps) for 46 races from 2023 and 2024 (the 2023 Imola race was cancelled and is not in the data). Each race becomes one row per driver per lap, labelled with whether that driver went on to win. About 50,000 rows in total.
+**Data.** Race summaries (laps, tyre stints, positions, gaps) for 46 races from 2023 and 2024. Each race becomes one row per driver per lap, labelled with whether that driver went on to win. About 50,000 rows in total.
 
 **Features** (all computed from what is known at that moment of the race; `app/features.py` is shared by training and the live server):
 
